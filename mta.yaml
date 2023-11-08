@@ -1,0 +1,92 @@
+_schema-version: '3.1'
+ID: CAP-userList
+version: 1.0.0
+description: "A simple CAP project."
+parameters:
+  enable-parallel-deployments: true
+build-parameters:
+  before-all:
+    - builder: custom
+      commands:
+        - npx -p @sap/cds-dk cds build --production
+modules:
+  # service
+  - name: CAP-userList-srv
+    type: nodejs
+    path: gen/srv
+    parameters:
+      buildpack: nodejs_buildpack
+    build-parameters:
+      builder: npm-ci
+    provides:
+      - name: srv-api # required by consumers of CAP services (e.g. approuter)
+        properties:
+          srv-url: ${default-url}
+    requires:
+      - name: db
+      - name: xsuaa
+      - name: destination
+
+  # db
+  - name: CAP-userList-db-deployer
+    type: hdb
+    path: gen/db
+    parameters:
+      buildpack: nodejs_buildpack
+    requires:
+      - name: db
+
+resources:
+  # hdi container
+  - name: db
+    type: com.sap.xs.hdi-container
+    parameters:
+      service: hana
+      service-keys:
+        - name: CAP-userList-db-key
+      service-plan: hdi-shared
+      service-name: CAP-userList-db
+  # security micro-service
+  - name: xsuaa
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: xsuaa
+      service-name: CAP-userList-xsuaa
+      service-keys:
+        - name: CAP-userList-xsuaa-key
+      service-plan: application
+      path: ./xs-security.json
+      config:
+        xsappname: CAP-userList-${org}-${space}
+        tenant-mode: dedicated
+  # destination micro-service
+  - name: destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service-name: downloadCsvService-dest
+      service: destination
+      service-plan: lite
+
+  # Expose app as destination in our sub-account
+  - name: CAP-userList-dest
+    type: destination
+    requires:
+      - name: srv-api
+    parameters:
+      config:
+        init_data:
+          subaccount: # level (sub-account / instance)
+            existing_destinations_policy: update
+            existing_certificates_policy: update
+            destinations:
+              - Name: userList-dest
+                URL: ~{srv-api/srv-url}
+                Type: HTTP
+                ProxyType: Internet
+                Authentication: NoAuthentication
+                HTML5Runtime_enabled: "true"
+                HTML5.ForwardAuthToken: "true"
+                HTML5.DynamicDestination: "true"
+                # WebIDEEnabled: "true"
+                # WebIDEUsage: odata_abap, bsp_execute_abap, odata_gen
+
